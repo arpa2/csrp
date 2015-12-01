@@ -138,7 +138,7 @@ CK_RV srp11_retrieve_pubkey (CK_SESSION_HANDLE p11ses,
  * protocol can be used as is, and that only the user needs to be aware that his
  * token is required to complete authentication.
  *
- * The API used by SRP #11 does not present usernames anywhere.  Please make
+ * The API used by SRP #11 does not lookup records by username.  Please make
  * sure to add attributes such as CKA_ID and/or CKA_LABEL with sufficient
  * information to reproduce whatever is needed to relocate the keys.  Also,
  * be aware that the default result of this call is a session key pair, not
@@ -198,6 +198,7 @@ CK_RV srp11_user_new (
 			CK_SESSION_HANDLE p11ses,
 			CK_OBJECT_HANDLE srp11pub, CK_OBJECT_HANDLE srp11priv,
 			SRP_HashAlgorithm alg,
+			char *username,
 			struct SRP11User **user);
 
 
@@ -217,9 +218,10 @@ int srp11_user_is_authenticated (struct SRP11User *user);
 
 
 /* key_length may be null */
-const unsigned char * srp11_user_get_session_key( struct SRP11User * usr, int * key_length );
+int srp11_user_get_session_key_length (struct SRP11User *user);
+unsigned char *srp11_user_get_session_key (struct SRP11User *user,
+					int *key_length);
 
-int                   srp11_user_get_session_key_length( struct SRP11User * usr );
 
 /* First step in the user-side of authentication:
  *  1. Pick a random number a sized like the secure hash
@@ -263,6 +265,7 @@ CK_RV srp11_user_process_challenge (
 			unsigned char **bytes_M, int *len_M);
 
 /* bytes_HAMK must be exactly srp11_user_get_session_key_length() bytes in size */
-CK_RV                 srp11_user_verify_session( struct SRP11User * usr, const unsigned char * bytes_HAMK );
+CK_RV srp11_user_verify_session (struct SRP11User *user,
+				unsigned char *bytes_HAMK);
 
 #endif /* Include Guard */

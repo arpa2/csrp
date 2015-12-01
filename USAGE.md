@@ -44,7 +44,7 @@ on, namely `CKA_KEY_TYPE` is set to `CKK_DH` and the public key has
 `CKA_CLASS` set to `CKO_PUBLIC_KEY` while the private key has it set to
 `CKO_PRIVATE_KEY`.
 
-Note how the username never comes into play for there functions.  You are
+Note how the username never comes into play for these functions.  You are
 advised to setup `CKA_LABEL` and/or `CKA_ID` to hold this information, with
 or without additional information that you can use (such as an indication
 of the hash algorithm used).  Precisely how the username is encoded in terms

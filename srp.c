@@ -414,6 +414,7 @@ static void calculate_M( SRP_HashAlgorithm alg, NGConstant *ng, unsigned char * 
     hash_update( alg, &ctx, K, hash_len );
 
     hash_final( alg, &ctx, dest );
+    H_debug ("srv.M", hash_len, dest);
 }
 
 static void calculate_H_AMK( SRP_HashAlgorithm alg, unsigned char *dest, const BIGNUM * A, const unsigned char * M, const unsigned char * K )
@@ -427,6 +428,7 @@ static void calculate_H_AMK( SRP_HashAlgorithm alg, unsigned char *dest, const B
     hash_update( alg, &ctx, K, hash_length(alg) );
 
     hash_final( alg, &ctx, dest );
+    H_debug ("srv.H_AMK", hash_length(alg), dest);
 }
 
 
@@ -589,6 +591,8 @@ struct SRPVerifier *  srp_verifier_new( SRP_HashAlgorithm alg, SRP_NGType ng_typ
        else
           k = H_nn_orig(alg, ng->N, ng->g);
 
+       BN_debug ("srv.k", k);
+
        if(!k)
        {
           free(ver);
@@ -622,12 +626,18 @@ struct SRPVerifier *  srp_verifier_new( SRP_HashAlgorithm alg, SRP_NGType ng_typ
           goto cleanup_and_exit;
        }
 
+       BN_debug ("srv.u", u);
+
        /* S = (A *(v^u)) ^ b */
        BN_mod_exp(tmp1, v, u, ng->N, ctx);
        BN_mul(tmp2, A, tmp1, ctx);
        BN_mod_exp(S, tmp2, b, ng->N, ctx);
 
+       BN_debug ("srv.S", S);
+
        hash_num(alg, S, ver->session_key);
+
+       H_debug ("srv.K", hash_length (ver->hash_alg), ver->session_key);
 
        calculate_M( alg, ng, ver->M, username, s, A, B, ver->session_key );
        calculate_H_AMK( alg, ver->H_AMK, A, ver->M, ver->session_key );

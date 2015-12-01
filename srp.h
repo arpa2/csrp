@@ -198,4 +198,12 @@ void                  srp_user_process_challenge( struct SRPUser * usr,
 /* bytes_HAMK must be exactly srp_user_get_session_key_length() bytes in size */
 void                  srp_user_verify_session( struct SRPUser * usr, const unsigned char * bytes_HAMK );
 
+#ifdef DEBUG
+#  define BN_debug(varnm,bignum) { printf ("%s = ", (varnm)); BN_print_fp (stdout, (bignum)); printf ("\n"); }
+#  define H_debug(varnm,hashlen,hash) { int i = 0; printf ("%s = ", (varnm)); while (i<(hashlen)) printf ("%02x", (hash)[i++]); printf ("\n"); }
+#else
+#  define BN_debug(varnm,bignum) { ; }
+#  define H_debug(varnm,hashlen,hash) { ; }
+#endif
+
 #endif /* Include Guard */

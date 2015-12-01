@@ -187,6 +187,8 @@ struct SRP11User {
 	BIGNUM *pubkey;
 	BIGNUM *modulus;
 	BIGNUM *base;
+	unsigned char hash_uname [SHA512_DIGEST_LENGTH];
+	unsigned char hash_nxg [SHA512_DIGEST_LENGTH];
 	//
 	// Setup in srp11_user_start_authentication()
 	BIGNUM *a;
@@ -289,16 +291,32 @@ static CK_MECHANISM_PTR hash_mechanism (SRP_HashAlgorithm alg) {
 	}
 }
 
-static void hash_update_bignum (SRP_HashAlgorithm alg, HashCTX *hctx, BIGNUM *n) {
+/* Update the hash with a bignum, padded to the given number of positions by
+ * preceding it with zero bytes as needed.  If padto == -1, padding will be
+ * skipped.  If padto >= 0 an assertion will be tested to ensure that the
+ * target is not already longer.
+ */
+static void hash_update_bignum (
+			SRP_HashAlgorithm alg, HashCTX *hctx,
+			int padto, BIGNUM *n) {
 	unsigned char bytes_n [5000];
 	int len_n;
+	int pos = 0;
 	len_n = BN_num_bytes (n);
+	if (padto >= 0) {
+		assert (padto >= len_n);
+		pos = padto - len_n;
+		assert (pos < sizeof (bytes_n));
+		if (pos > 0) {
+			bzero (bytes_n, pos);
+		}
+	}
 	assert (len_n <= sizeof (bytes_n));
-	BN_bn2bin (n, bytes_n);
-	hash_update (alg, hctx, bytes_n, len_n);
+	BN_bn2bin (n, bytes_n + pos);
+	hash_update (alg, hctx, bytes_n, pos + len_n);
 }
 
-static BIGNUM *H_nn (SRP_HashAlgorithm alg, BIGNUM *n1, BIGNUM *n2) {
+static BIGNUM *H_nn (SRP_HashAlgorithm alg, int padto, BIGNUM *n1, BIGNUM *n2) {
 	unsigned char hbuf [SHA512_DIGEST_LENGTH];
 	HashCTX hctx;
 	int hashlen;
@@ -309,8 +327,8 @@ static BIGNUM *H_nn (SRP_HashAlgorithm alg, BIGNUM *n1, BIGNUM *n2) {
 	//
 	// Compute the hash
 	hash_init          (alg, &hctx);
-	hash_update_bignum (alg, &hctx, n1);
-	hash_update_bignum (alg, &hctx, n2);
+	hash_update_bignum (alg, &hctx, padto, n1);
+	hash_update_bignum (alg, &hctx, padto, n2);
 	hash_final         (alg, &hctx, hbuf);
 	//
 	// Turn the hash into a BIGNUM
@@ -775,6 +793,7 @@ CK_RV srp11_user_new (
 				CK_OBJECT_HANDLE srp11pub,
 				CK_OBJECT_HANDLE srp11priv,
 				SRP_HashAlgorithm alg,
+				char *username,
 				struct SRP11User **user) {
 	CK_RV ckrv = CKR_OK;
 	CK_BYTE pubkey  [5000];
@@ -784,9 +803,13 @@ CK_RV srp11_user_new (
 		{ CKA_VALUE, pubkey , sizeof (pubkey ) },
 		{ CKA_PRIME, modulus, sizeof (modulus) },
 		{ CKA_BASE,  base   , sizeof (base   ) } };
+	HashCTX hctx;
+	int i;
 	//
-	// Initialise
+	// Initialise and satisfy assumptions
 	assert (user != NULL);
+	assert (username != NULL);
+	assert (strlen (username) > 0);
 	*user = NULL;
 	//
 	// Allocate and clear the return structure
@@ -811,6 +834,22 @@ CK_RV srp11_user_new (
 		ckrv = CKR_HOST_MEMORY;
 		goto failure;
 	}
+	//
+	// H(n) ^ H(g) -> hash_nxg
+	// H(username) -> hash_uname 
+	hash_init   (alg, &hctx);
+	hash_update (alg, &hctx, modulus, pubmodbas [1].ulValueLen);
+	hash_final  (alg, &hctx, (*user)->hash_uname);	// tmp H(n)
+	hash_init   (alg, &hctx);
+	hash_update (alg, &hctx, base,    pubmodbas [2].ulValueLen);
+	hash_final  (alg, &hctx, (*user)->hash_nxg);
+	i = hash_length (alg);
+	while (i-- > 0) {
+		(*user)->hash_nxg [i] ^= (*user)->hash_uname [i];
+	}
+	hash_init   (alg, &hctx);
+	hash_update (alg, &hctx, username, strlen (username));
+	hash_final  (alg, &hctx, (*user)->hash_uname);
 	//
 	// Allocate additional variables needed for the protocol flow
 	(*user)->a = BN_new ();
@@ -1061,11 +1100,12 @@ CK_RV srp11_user_process_challenge (
 	// Compute k = H(N,g) -- this is specific for SRP 6a
 	//                    -- it was 3 in legacy SRP 6
 	//                    -- it was 1 (or absent) in SRP 3
-	bn_k = H_nn (user->hash_alg, user->modulus, user->base);
+	bn_k = H_nn (user->hash_alg, modlen, user->modulus, user->base);
 	if (bn_k == NULL) {
 		ckrv = CKR_HOST_MEMORY;
 		goto cleanup;
 	}
+	BN_debug ("cli.k", bn_k);
 	//
 	// Compute u = H(A,B) -- this is specific for SRP 6
 	//                    -- it was server-generated random in SRP 3
@@ -1074,11 +1114,12 @@ CK_RV srp11_user_process_challenge (
 		ckrv = CKR_HOST_MEMORY;
 		goto cleanup;
 	}
-	bn_u = H_nn (user->hash_alg, user->A, bn_B);
+	bn_u = H_nn (user->hash_alg, modlen, user->A, bn_B);
 	if (bn_u == NULL) {
 		ckrv = CKR_HOST_MEMORY;
 		goto cleanup;
 	}
+	BN_debug ("cli.u", bn_u);
 	//
 	// Compute S = (B-kv)^a * (((B-kv)^u)^(H(s)^P))^P
 	//  1. bn_1 := bn_v * bn_k == kv
@@ -1121,12 +1162,14 @@ CK_RV srp11_user_process_challenge (
 		ckrv = CKR_GENERAL_ERROR;
 		goto cleanup;
 	}
+	BN_debug ("cli.S", bn_S);
 	//
 	// Compute K = H(S)
 	// Note that K is stored as user->session_key [0..hashlen>
 	hash_init          (user->hash_alg, &hctx);
-	hash_update_bignum (user->hash_alg, &hctx, bn_S);
+	hash_update_bignum (user->hash_alg, &hctx, modlen, bn_S);
 	hash_final         (user->hash_alg, &hctx, user->session_key);
+	H_debug ("cli.K", hashlen, user->session_key);
 	//
 	// Setup the space to return M
 	*bytes_M = malloc (hashlen);
@@ -1136,19 +1179,24 @@ CK_RV srp11_user_process_challenge (
 	}
 	*len_M = hashlen;
 	//
-	// Compute M = H(A,B,K) to validate user to the service
+	// Compute M = H(H(N)^H(g),H(I),s,A,B,K) to validate user to the service
 	hash_init          (user->hash_alg, &hctx);
-	hash_update_bignum (user->hash_alg, &hctx, user->A);
-	hash_update_bignum (user->hash_alg, &hctx, bn_B);
+	hash_update        (user->hash_alg, &hctx, user->hash_nxg,    hashlen);
+	hash_update        (user->hash_alg, &hctx, user->hash_uname,  hashlen);
+	hash_update        (user->hash_alg, &hctx, bytes_s, len_s);
+	hash_update_bignum (user->hash_alg, &hctx, modlen, user->A);
+	hash_update_bignum (user->hash_alg, &hctx, modlen, bn_B);
 	hash_update        (user->hash_alg, &hctx, user->session_key, hashlen);
 	hash_final         (user->hash_alg, &hctx, *bytes_M);
+	H_debug ("cli.M", hashlen, *bytes_M);
 	//
 	// Compute H_AMK = H (A,M,K) for future validation of service to user
 	hash_init          (user->hash_alg, &hctx);
-	hash_update_bignum (user->hash_alg, &hctx, user->A);
-	hash_update        (user->hash_alg, &hctx, bytes_M,           hashlen);
+	hash_update_bignum (user->hash_alg, &hctx, modlen, user->A);
+	hash_update        (user->hash_alg, &hctx, *bytes_M,          hashlen);
 	hash_update        (user->hash_alg, &hctx, user->session_key, hashlen);
 	hash_final         (user->hash_alg, &hctx, user->H_AMK);
+	H_debug ("cli.H_AMK", hashlen, user->H_AMK);
 	//
 	// We allocated several intermediate-value buffers; clean them up.
 cleanup:
@@ -1198,34 +1246,32 @@ cleanup:
 	return ckrv;
 }
 
+CK_RV srp11_user_verify_session (struct SRP11User *user,
+				unsigned char *bytes_HAMK) {
+	if (memcmp (user->H_AMK, bytes_HAMK, hash_length (user->hash_alg)) != 0) {
+		return CKR_SIGNATURE_INVALID;
+	}
+	user->authenticated = 1;
+	return CKR_OK;
+}
+
 
 int srp11_user_has_authenticated_service (struct SRP11User *user) {
 	return user->authenticated;
 }
 
 
-
-#if 0
-
-const unsigned char * srp11_user_get_session_key( struct SRP11User * usr, int * key_length )
-{
-    if (key_length)
-        *key_length = hash_length( usr->hash_alg );
-    return usr->session_key;
+int srp11_user_get_session_key_length (struct SRP11User *user) {
+	return hash_length (user->hash_alg);
 }
 
 
-int                   srp11_user_get_session_key_length( struct SRP11User * usr )
-{
-    return hash_length( usr->hash_alg );
+unsigned char *srp11_user_get_session_key (struct SRP11User *user,
+					int *key_length) {
+	if (key_length) {
+		*key_length = hash_length (user->hash_alg);
+	}
+	return user->session_key;
 }
 
 
-
-
-void srp11_user_verify_service( struct SRP11User * usr, const unsigned char * bytes_HAMK )
-{
-    if ( memcmp( usr->H_AMK, bytes_HAMK, hash_length(usr->hash_alg) ) == 0 )
-        usr->authenticated = 1;
-}
-#endif

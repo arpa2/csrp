@@ -193,7 +193,8 @@ int main( int argc, char * argv[] )
 	 */
         ckrv =  srp11_user_new (
 		p11ses, srp11pub, srp11priv,
-		alg, &usr);
+		alg, (char *) username,
+		&usr);
 
 	if (ckrv != CKR_OK) {
 	    printf ("Failed to start new user session: 0x%08x\n", ckrv);
@@ -234,20 +235,18 @@ int main( int argc, char * argv[] )
         
         if ( !bytes_HAMK )
         {
-            printf("User authentication failed!\n");
+            printf("Failed to verify the user on the service side!\n");
             goto cleanup;
         }
 
-#if 0        
         /* Host -> User: (HAMK) */
-        ckrv = srp11_user_verify_session( usr, bytes_HAMK );
+        ckrv = srp11_user_verify_session (usr, bytes_HAMK);
 
 	if (ckrv != CKR_OK) {
 	    printf ("Failed to verify the session on the user end: 0x%08x\n", ckrv);
 	    goto cleanup;
 	}
-#endif
-        
+
 	if (!srp11_user_has_authenticated_service (usr)) {
 		printf("Server authentication failed!\n");
 	}
