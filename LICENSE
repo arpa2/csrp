@@ -1,6 +1,7 @@
 The MIT License (MIT)
 
-Copyright (c) 2013 Tom Cocagne
+Copyright (c) 2013 Tom Cocagne (basic csrp code without PKCS #11)
+Copyright (c) 2015 Rick van Rein (only the SRP #11 modifications)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy of
 this software and associated documentation files (the "Software"), to deal in
