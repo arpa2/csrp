@@ -159,8 +159,10 @@ static NGConstant * new_ng( SRP_NGType ng_type, const char * n_hex, const char *
     ng->N             = BN_new();
     ng->g             = BN_new();
 
-    if( !ng->N || !ng->g )
+    if( !ng->N || !ng->g ) {
+	free( ng );
        return 0;
+    }
 
     if ( ng_type != SRP_NG_CUSTOM )
     {
