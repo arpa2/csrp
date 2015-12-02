@@ -1,0 +1,79 @@
+<html>
+<head>
+<title>SRP: Design Specifications</title>
+</head>
+<body fgcolor="#000000" bgcolor="#FFFFFF">
+<h1>SRP-3 Protocol Design</h1>
+SRP-3 was the protocol
+<a href="ftp://srp.stanford.edu/pub/srp/srp.ps">published in 1998</a>
+and described in RFC2945.
+It solved the security problems of <a href="design1.html">SRP-1</a> and
+<a href="design2.html">SRP-2</a>,
+and is still widely used.
+It suffers from the "two-for-one" password guessing attack,
+and requires the server to wait for one of the client's
+messages before sending its own.
+Both these issues have been addressed by <a href="design.html">SRP-6</a>,
+which is recommended for new applications.
+<pre>
+  N    A large safe prime (N = 2q+1, where q is prime)
+       All arithmetic is done modulo N.
+  g    A generator modulo N
+  s    User's salt
+  U    Username
+  p    Cleartext Password
+  H()  One-way hash function
+  ^    (Modular) Exponentiation
+  t    Security parameter
+  u    Random scrambling parameter
+  a,b  Secret ephemeral values
+  A,B  Public ephemeral values
+  x    Private key (derived from p and s)
+  v    Password verifier
+</pre>
+
+The host stores passwords using the following formula:
+
+<pre>
+  x = H(s, p)               (s is chosen randomly)
+  v = g^x                   (computes password verifier)
+</pre>
+
+The host then keeps {U, s, v} in its password database.
+
+The authentication protocol itself goes as follows:
+
+<pre>
+User -> Host:  U, A = g^a                  (identifies self, a = random number)
+Host -> User:  s, B = v + g^b, u           (sends salt, b = random number,
+                                            u = t-bit random number)
+
+        User:  x = H(s, p)                 (user enters password)
+        User:  S = (B - g^x) ^ (a + ux)    (computes session key)
+        User:  K = H(S)
+
+        Host:  S = (Av^u) ^ b              (computes session key)
+        Host:  K = H(S)
+</pre>
+
+Now the two parties have a shared, strong session key K.  To complete
+authentication, they need to prove to each other that their keys match.
+One possible way:
+
+<pre>
+User -> Host:  M = H(H(N) xor H(g), H(U), s, A, B, K)
+Host -> User:  H(A, M, K)
+</pre>
+
+The two parties also employ the following safeguards:
+<ol>
+<li>The user will abort if he receives B == 0 (mod N) or u == 0.
+<li>The host will abort if it detects that A == 0 (mod N).
+<li>The user must show his proof of K first.  If the server detects that
+the user's proof is incorrect, it must abort without showing its own
+proof of K.
+</ol>
+<hr>
+<a href="index.html">Back</a>
+</body>
+</html>

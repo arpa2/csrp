@@ -631,7 +631,7 @@ static CK_RV compute_H_s_hochP (
 	attr.ulValueLen = sizeof (tmpkey);
 	ckrv = C_GetAttributeValue (p11ses, key_H_s_hochP, &attr, 1);
 	if (ckrv != CKR_OK) goto cleanup;
-	if (attr.ulValueLen != modlen) {
+	if (attr.ulValueLen > modlen) {
 		ckrv = CKR_DOMAIN_PARAMS_INVALID;
 		goto cleanup;
 	}
@@ -1065,7 +1065,7 @@ CK_RV srp11_user_process_challenge (
 		return CKR_DOMAIN_PARAMS_INVALID;
 	}
 	modlen = BN_num_bytes (user->modulus);
-	if (len_B != modlen) {
+	if (len_B > modlen) {
 		return CKR_DOMAIN_PARAMS_INVALID;
 	}
 	//
@@ -1167,7 +1167,7 @@ CK_RV srp11_user_process_challenge (
 	// Compute K = H(S)
 	// Note that K is stored as user->session_key [0..hashlen>
 	hash_init          (user->hash_alg, &hctx);
-	hash_update_bignum (user->hash_alg, &hctx, modlen, bn_S);
+	hash_update_bignum (user->hash_alg, &hctx, -1, bn_S);
 	hash_final         (user->hash_alg, &hctx, user->session_key);
 	H_debug ("cli.K", hashlen, user->session_key);
 	//

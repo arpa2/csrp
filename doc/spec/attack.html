@@ -1,0 +1,52 @@
+<html>
+<head>
+<title>An Attack against SRP-1</title>
+</head>
+<body fgcolor="#000000" bgcolor="#FFFFFF">
+<h1>An Attack against SRP-1</h1>
+SRP-1 (the oldest version of the protocol) is, unfortunately,
+vulnerable to an attack carried out by an
+intruder who has compromised the password database and obtained
+the verifier Xp for a particular user, as described below.
+<pre>
+A Stolen-Verifier Attack against SRP-1:
+
+An attacker Anne steals Alice's verifier Xp.
+She then contacts the host:
+
+Anne computes T = Xp ^ -1 (mod N)          (multplicative inverse)
+and picks a random number 1 < q < N - 1.
+
+Anne->Host:  u, Wp = (g ^ q) * T (mod N)   (instead of g^Ws)
+Host->Anne:  s, Z = Xp + Yp                (host computes Yp as normal)
+
+      Host:  S = (Wp * Xp) ^ Ys
+             Ks = H(s)
+
+If we substitute for Wp here, the server's session key becomes:
+
+             S = (g ^ q * T * Xp) ^ Ys = (g ^ q) ^ Ys = g ^ (q * Ys)
+
+      Anne:  Yp = Z - Xp                   (recovers Yp since Xp is known)
+      Anne:  S = Yp ^ q
+      Anne:  Kc = H(S)
+
+Since Yp ^ q = (g ^ Ys) ^ q = g ^ (q * Ys), Anne now has the same session
+key S as the host.  All Anne needs to do is send
+
+Anne->Host:  H(Z, Kc)
+
+to gain access to the host.
+</pre>
+<a href="design2.html">SRP-2</a> and <a href="design.html">SRP-3</a> are both
+immune to this attack.
+<p>
+This file can be obtained as <a href="attack.txt">ASCII text</a>.
+You can use the
+<a href="http://www.dcs.ex.ac.uk/~aba/sha.html">Perl implementation of SHA</a>
+to verify its hash.
+<p>
+<hr>
+<a href="index.html">Back</a>
+</body>
+</html>
