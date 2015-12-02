@@ -381,6 +381,16 @@ static void update_hash_n( SRP_HashAlgorithm alg, HashCTX *ctx, const BIGNUM * n
     free(n_bytes);
 }
 
+static void update_hash_n_padded( SRP_HashAlgorithm alg, HashCTX *ctx, const BIGNUM * N, const BIGNUM * n )
+{
+    int padding = BN_num_bytes( N ) - BN_num_bytes( n );
+    char nul = '\x00';
+    while (padding-- > 0) {
+       hash_update(alg, ctx, &nul, 1);
+    }
+    update_hash_n( alg, ctx, n);
+}
+
 static void hash_num( SRP_HashAlgorithm alg, const BIGNUM * n, unsigned char * dest )
 {
     int             nbytes = BN_num_bytes(n);
@@ -415,21 +425,21 @@ static void calculate_M( SRP_HashAlgorithm alg, NGConstant *ng, unsigned char * 
     hash_update( alg, &ctx, H_xor, hash_len );
     hash_update( alg, &ctx, H_I,   hash_len );
     update_hash_n( alg, &ctx, s );
-    update_hash_n( alg, &ctx, A );
-    update_hash_n( alg, &ctx, B );
+    update_hash_n_padded( alg, &ctx, ng->N, A );
+    update_hash_n_padded( alg, &ctx, ng->N, B );
     hash_update( alg, &ctx, K, hash_len );
 
     hash_final( alg, &ctx, dest );
     H_debug ("srv.M", hash_len, dest);
 }
 
-static void calculate_H_AMK( SRP_HashAlgorithm alg, unsigned char *dest, const BIGNUM * A, const unsigned char * M, const unsigned char * K )
+static void calculate_H_AMK( SRP_HashAlgorithm alg, NGConstant *ng, unsigned char *dest, const BIGNUM * A, const unsigned char * M, const unsigned char * K )
 {
     HashCTX ctx;
 
     hash_init( alg, &ctx );
 
-    update_hash_n( alg, &ctx, A );
+    update_hash_n_padded( alg, &ctx, ng->N, A );
     hash_update( alg, &ctx, M, hash_length(alg) );
     hash_update( alg, &ctx, K, hash_length(alg) );
 
@@ -646,7 +656,7 @@ struct SRPVerifier *  srp_verifier_new( SRP_HashAlgorithm alg, SRP_NGType ng_typ
        H_debug ("srv.K", hash_length (ver->hash_alg), ver->session_key);
 
        calculate_M( alg, ng, ver->M, username, s, A, B, ver->session_key );
-       calculate_H_AMK( alg, ver->H_AMK, A, ver->M, ver->session_key );
+       calculate_H_AMK( alg, ng, ver->H_AMK, A, ver->M, ver->session_key );
 
        *len_B   = BN_num_bytes(B);
        *bytes_B = (const unsigned char *)malloc( *len_B );
@@ -915,7 +925,7 @@ void  srp_user_process_challenge( struct SRPUser * usr,
 
         hash_num(usr->hash_alg, usr->S, usr->session_key);
         calculate_M( usr->hash_alg, usr->ng, usr->M, usr->username, s, usr->A, B, usr->session_key );
-        calculate_H_AMK( usr->hash_alg, usr->H_AMK, usr->A, usr->M, usr->session_key );
+        calculate_H_AMK( usr->hash_alg, usr->ng, usr->H_AMK, usr->A, usr->M, usr->session_key );
         *bytes_M = usr->M;
         if (len_M)
             *len_M = hash_length( usr->hash_alg );
