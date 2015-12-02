@@ -152,10 +152,14 @@ static struct NGHex global_Ng_constants[] = {
 static NGConstant * new_ng( SRP_NGType ng_type, const char * n_hex, const char * g_hex )
 {
     NGConstant * ng   = (NGConstant *) malloc( sizeof(NGConstant) );
+
+    if( !ng )
+       return 0;
+
     ng->N             = BN_new();
     ng->g             = BN_new();
 
-    if( !ng || !ng->N || !ng->g )
+    if( !ng->N || !ng->g )
        return 0;
 
     if ( ng_type != SRP_NG_CUSTOM )
