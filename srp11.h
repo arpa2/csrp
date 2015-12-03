@@ -196,8 +196,9 @@ CK_RV srp11_create_salted_verification_key(
  */
 CK_RV srp11_user_new (
 			CK_SESSION_HANDLE p11ses,
-			CK_OBJECT_HANDLE srp11pub, CK_OBJECT_HANDLE srp11priv,
+			CK_OBJECT_HANDLE srp11priv,
 			SRP_HashAlgorithm alg,
+			unsigned char *bytes_pubkey, int len_pubkey,
 			char *username,
 			struct SRP11User **user);
 

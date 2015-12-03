@@ -269,27 +269,6 @@ static int hash_length( SRP_HashAlgorithm alg )
         return -1;
     };
 }
-static CK_MECHANISM_PTR hash_mechanism (SRP_HashAlgorithm alg) {
-	static CK_MECHANISM ckm_sha_1  = { CKM_SHA_1,  NULL, 0 };
-	static CK_MECHANISM ckm_sha224 = { CKM_SHA224, NULL, 0 };
-	static CK_MECHANISM ckm_sha256 = { CKM_SHA256, NULL, 0 };
-	static CK_MECHANISM ckm_sha384 = { CKM_SHA384, NULL, 0 };
-	static CK_MECHANISM ckm_sha512 = { CKM_SHA512, NULL, 0 };
-	switch (alg) {
-	case SRP_SHA1:
-		return &ckm_sha_1;
-	case SRP_SHA224:
-		return &ckm_sha224;
-	case SRP_SHA256:
-		return &ckm_sha256;
-	case SRP_SHA384:
-		return &ckm_sha384;
-	case SRP_SHA512:
-		return &ckm_sha512;
-	default:
-		return NULL;
-	}
-}
 
 /* Update the hash with a bignum, padded to the given number of positions by
  * preceding it with zero bytes as needed.  If padto == -1, padding will be
@@ -581,10 +560,10 @@ static CK_RV compute_H_s_hochP (
 	CK_BYTE H_s [SHA512_DIGEST_LENGTH];
 	CK_MECHANISM digmech;
 	int hashlen = hash_length (hash_alg);
-	CK_ULONG hashlen11;
 	CK_ULONG modlen = BN_num_bytes (bn_m);
 	CK_BYTE tmpkey [5000];
 	CK_ATTRIBUTE attr;
+	HashCTX hctx;
 	//
 	// Sizes and safety checks
 	assert (bn_m != NULL);
@@ -597,17 +576,14 @@ static CK_RV compute_H_s_hochP (
 	// Determine H(s) and store it in H_s; take bytes beyond random
 	// that was just filled into account; it might be used for things
 	// like pinning.
-	ckrv = C_DigestInit (p11ses, hash_mechanism (hash_alg));
-	if (ckrv != CKR_OK) return ckrv;
-	hashlen11 = hashlen;
-	ckrv = C_Digest (p11ses, (CK_BYTE_PTR) bytes_s, len_s, H_s, &hashlen11);
-	if (ckrv != CKR_OK) return ckrv;
-	assert (hashlen == hashlen11);
+	hash_init   (hash_alg, &hctx);
+	hash_update (hash_alg, &hctx, bytes_s, len_s);
+	hash_final  (hash_alg, &hctx, H_s);
 	//
 	// Now use C_DeriveKey() to construct H(s)^P in the token,
 	// thus employing the private key P without taking it off the token;
 	// the result is a session key that will be taken off 
-	CK_MECHANISM drvmech = { CKM_DH_PKCS_DERIVE, H_s, hashlen11 };
+	CK_MECHANISM drvmech = { CKM_DH_PKCS_DERIVE, H_s, hashlen };
 	CK_OBJECT_CLASS drvobjcls = CKO_SECRET_KEY;
 	CK_KEY_TYPE drvkeytp = CKK_GENERIC_SECRET;
 	CK_OBJECT_HANDLE key_H_s_hochP = CK_INVALID_HANDLE;
@@ -790,17 +766,15 @@ cleanup:
 
 CK_RV srp11_user_new (
 				CK_SESSION_HANDLE p11ses,
-				CK_OBJECT_HANDLE srp11pub,
 				CK_OBJECT_HANDLE srp11priv,
 				SRP_HashAlgorithm alg,
+				unsigned char *bytes_pubkey, int len_pubkey,
 				char *username,
 				struct SRP11User **user) {
 	CK_RV ckrv = CKR_OK;
-	CK_BYTE pubkey  [5000];
 	CK_BYTE modulus [5000];
 	CK_BYTE base    [1000];
-	CK_ATTRIBUTE pubmodbas [] = {
-		{ CKA_VALUE, pubkey , sizeof (pubkey ) },
+	CK_ATTRIBUTE modbas [] = {
 		{ CKA_PRIME, modulus, sizeof (modulus) },
 		{ CKA_BASE,  base   , sizeof (base   ) } };
 	HashCTX hctx;
@@ -820,14 +794,14 @@ CK_RV srp11_user_new (
 	}
 	bzero (*user, sizeof (struct SRP11User));
 	//
-	// Retrieve prime, base and modulus from srp11pub in PKCS #11
-	ckrv = C_GetAttributeValue (p11ses, srp11pub, pubmodbas, 3);
+	// Retrieve prime, base and modulus from srp11priv in PKCS #11
+	ckrv = C_GetAttributeValue (p11ses, srp11priv, modbas, 2);
 	if (ckrv != CKR_OK) goto failure;
 	//
 	// Map the prime, base and modulus to a BIGNUM
-	(*user)->pubkey  = BN_bin2bn (pubkey , pubmodbas [0].ulValueLen, NULL);
-	(*user)->modulus = BN_bin2bn (modulus, pubmodbas [1].ulValueLen, NULL);
-	(*user)->base    = BN_bin2bn (base   , pubmodbas [2].ulValueLen, NULL);
+	(*user)->pubkey  = BN_bin2bn (bytes_pubkey, len_pubkey, NULL);
+	(*user)->modulus = BN_bin2bn (modulus, modbas [0].ulValueLen, NULL);
+	(*user)->base    = BN_bin2bn (base   , modbas [1].ulValueLen, NULL);
 	if (((*user)->pubkey  == NULL) ||
 	    ((*user)->modulus == NULL) ||
 	    ((*user)->base    == NULL)) {
@@ -838,10 +812,10 @@ CK_RV srp11_user_new (
 	// H(n) ^ H(g) -> hash_nxg
 	// H(username) -> hash_uname 
 	hash_init   (alg, &hctx);
-	hash_update (alg, &hctx, modulus, pubmodbas [1].ulValueLen);
+	hash_update (alg, &hctx, modulus, modbas [0].ulValueLen);
 	hash_final  (alg, &hctx, (*user)->hash_uname);	// tmp H(n)
 	hash_init   (alg, &hctx);
-	hash_update (alg, &hctx, base,    pubmodbas [2].ulValueLen);
+	hash_update (alg, &hctx, base,    modbas [1].ulValueLen);
 	hash_final  (alg, &hctx, (*user)->hash_nxg);
 	i = hash_length (alg);
 	while (i-- > 0) {

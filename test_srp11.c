@@ -192,8 +192,10 @@ int main( int argc, char * argv[] )
 	/* Create a new user instance
 	 */
         ckrv =  srp11_user_new (
-		p11ses, srp11pub, srp11priv,
-		alg, (char *) username,
+		p11ses, srp11priv,
+		alg,
+		bytes_pubkey, len_pubkey,
+		(char *) username,
 		&usr);
 
 	if (ckrv != CKR_OK) {
