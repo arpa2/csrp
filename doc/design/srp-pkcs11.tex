@@ -3,7 +3,12 @@
 \usepackage{xspace}
 \def\pkcs11{PKCS$\;$\#11\xspace}
 \def\srp11{SRP$\;$\#11\xspace}
-\def\c_#1 {\textsf{C\_#1}\xspace}
+\def\c_#1 {\textsf{C\_#1()}\xspace}
+\def\CKM_#1 {\textsf{CKM\_#1}\xspace}
+\def\CKA_#1 {\textsf{CKA\_#1}\xspace}
+\def\CKO_#1 {\textsf{CKO\_#1}\xspace}
+\def\CKK_#1 {\textsf{CKK\_#1}\xspace}
+\def\CK_#1 {\textsf{CK\_#1}\xspace}
 
 %TODO% Contextual spacing is off
 \def\tol#1{\longleftarrow\strut{}#1\strut\phantom{\longrightarrow}}
@@ -52,7 +57,8 @@ k=H(N,g)&&k=H(N,g)\\
 u=H(A,B)&&u=H(A,B)\\
 S=(B-k\cdot g^x)^{a+ux} && S=(A\cdot v^u)b\\
 K=H(S)&&K=H(S)\\
-M_1=H(A,B,K)&&\\
+% M_1=H(A,B,K)&&\\
+M_1=H(H(N)\oplus H(g),H(C),s,A,B,K)&&\\
 &\tor{M_1}&\textrm{verify $M_1$}\\
 &&M_2=H(A,M_1,K)\\
 \textrm{verify $M_2$}&\tol{M_2}&
@@ -138,7 +144,8 @@ k=H(N,g)&&k=H(N,g)\\
 u=H(A,B)&&u=H(A,B)\\
 S'=(B-k\cdot v')^a\cdot (((B-v')^u)^{H(s)})^P && S=(A\cdot {v'}^u)^b\\
 K'=H(S')&&K=H(S)\\
-M_1'=H(A,B,K')&&\\
+% M_1'=H(A,B,K')&&\\
+M_1=H(H(N)\oplus H(g),H(C),s,A,B,K)&&\\
 &\tor{M_1'}&\textrm{verify $M_1'$}\\
 &&M_2'=H(A,M_1',K)\\
 \textrm{verify $M_2'$}&\tol{M_2'}&
@@ -208,10 +215,11 @@ k=H(N,g)&&k=H(N,g)\\
 u=H(A,B)&&u=H(A,B)\\
 S''=(B-k\cdot v'')^a\cdot (((B-k\cdot v'')^u)^{{H(s)}^P})^P && S=(A\cdot {v''}^u)^b\\
 K''=H(S'')&&K=H(S)\\
-M_1''=H(A,B,K'')&&\\
+% M_1''=H(A,B,K'')&&\\
+M_1=H(H(N)\oplus H(g),H(C),s,A,B,K)&&\\
 &\tor{M_1''}&\textrm{verify $M_1''$}\\
 &&M_2''=H(A,M_1'',K)\\
-\textrm{verify $M_2'';$}&\tol{M_2''}&
+\textrm{verify $M_2''$}&\tol{M_2''}&
 \end{eqnarray*}
 
 The calculation procedure for $S''$ by the client differs from the original calculation, but ought to yield the same output as the standard calculation of $S$ by the service under proper authentication conditions.  The same then holds for $K''$, $M_1''$ and $M_2''$.  We only use the accents to the symbols to distinguish their calculation and be able to prove equality.
@@ -241,32 +249,44 @@ This establishes that the unmodified SRP service algorithm, as well as the unmod
 The following describes how to implement the last iteration of the SRP mechanism and demonstrates its integration with \pkcs11.  Where the distinction is useful, we will distinghuish `plain SRP' from this modified form, which we will refer to as \srp11.
 
 \textbf{Password establishment.}
-A new `password' is generated with the DH mechanism in \c_GenerateKeyPair, leading to a randomly generated private key $P$ and a public key $p$.  Only for reasons of backup might wrapped export of $p$ be permissible, but $P$ can be handled with more relaxation.  The two are never used separately however, so there is no real use in treating them any differently.
+A new `password' is generated with the \CKM_DH\_PKCS\_KEY\_PAIR\_GEN mechanism in \c_GenerateKeyPair , leading to a randomly generated private key $P$ and a public key $p$.  Only for reasons of backup might wrapped export of $p$ be permissible, but $P$ can be handled with more relaxation.  The two are never used separately, but the public key may be used outside of \pkcs11 for reasons of efficiency.
 
-It is not advised to delete the public key.  Although it can be derived in theory from the private key by supplying a `remote offer' valued 1 to \c_DeriveKey, the outcome of this function is not likely to be permitted having the \texttt{CKK\_DH} key type.  TODO: But we don't need that setting, as we will export the public key and use it off-token anyway, since generic mod-exp is not available on the token anyway.
+The base value used is the generator $g$, to establish the relationship $p=g^P$.  Both the base value and the modulus are commonly used group parameters for the SRP scheme, with a few standardised in Appendix A of RFC 5054.  These must be supplied as parameters to \c_GenerateKeyPair .  For standard modular-exponentiation Diffie-Hellman key exchange, cryptoanalytic advances suggest the use of non-standard groups, to evade dangers caused by pre-computed lookup tables.
 
-The base value used is the generator $g$, to establish the relationship $p=g^P$.  Both the base value and the modulus are commonly used group parameters for the SRP scheme, with a few standardised in Appendix A of RFC 5054.
+\textbf{Private modular exponentiation.}
+The private key can be used as an exponent in modular exponentiation through \c_DeriveKey with the \CKM_DH\_PKCS\_DERIVE method.  The outcome of this operation can be stored in a \CKO_SECRET\_KEY of type \CKK_GENERIC\_SECRET with \CKA_VALUE\_LEN set to the number of bytes in the modulus.  The template used must set \CKA_EXTRACTABLE to \CK_TRUE , so the outcome can be retrieved from the session; the outcome is stored as a session key and after extraction this key should be deleted with \c_DestroyObject if the session persists.  Programmers must be aware that implementations can remote leading zero bytes, and thus shorten the exported key.
 
-Since it is not necessary to export the value of $P$, it can be created in such a way that \pkcs11 enforces this key concealment.  The value $p$ is retained for efficiency purposes, even if it could also be derived on the fly through $g^P$ with \c_DeriveKey.
-
-TODO:EDITED-TILL-HERE
+\textbf{Public key regeneration.}
+It is possible to regenerate the public key $p$ as $g^P$ because the private key is annotated with non-sensitive \CKA_PRIME holding the modulus and \CKA_BASE holding $g$.  The regenerated public key could be a session key that is not stored on the token even if the private key is.  This means that it is possible to compute the public key from scratch, had it been deleted, and implement caching schemes and so on for it.  This method can be used to save \pkcs11 storage capacity, or to avoid having to keep track of both keys.  It is costly however; it takes an extra modular exponentiation operation.  Another possibility is to export the public key value and store it off-token.
 
 \textbf{Credentials generation.}
-To derive service access credentials from the password, first generate a random salt $s$.  The value is public, and may be generated on or off the \pkcs11 token.  Then, the token's \c_DigestXXX functions must be used to compute the hash value $x=H(s)$ either on or off the token; the outcome can be used to calculate $p^{H(s)}$ off-token.  The result of that operation is input to \c_DeriveKey, where it is raised to the power $P$ in a modular exponentiation operation on the token with \c_DigestKey.  The outcome is $v''$, which is supplied in a pair $\langle s,v\rangle$ to the service, together with a username.
+When fresh Diffie-Hellman group parameters are desired, these can be generated first.  To derive service access credentials from the password, generate a random salt $s$ of the same size as the outcome of $H()$.  The value of $s$ is public, and may be generated on or off the \pkcs11 token, although the entropy of \c_GenerateRandom is likely to be of higher quality than more or less deterministic source from an operating system.  Then, a hash function (not necessarily using the token's \c_DigestXXX functions) must be used to compute the hash value $x=H(s)$; the outcome can be used to calculate $p^{H(s)}$ off-token.  The result of that operation is input to private modular exponentiation, which requires access to the token, to generate the outcome $v''$.  This outcome is supplied in a pair $\langle s,v\rangle$ to the service, together with the client's username $C$ that serves as a lookup key for the pair.
 
 \textbf{Authentication.}
-The client starts off as basic DH with \c_GenerateKeyPair.  The private key will be known as $a$ and the public key is $A$.  Send $A$ over to the service.
+The client starts off generating random bytes, at least the size of the hash $H()$,
+and calls it $a$.  Random bytes are best generated with \c_GenerateRandom , because
+the API potentially speaks to cryptographic hardware, making it
+yield at least as good random material as an operating system can.
+The client then uses private modular exponentiation to map $a$ to
+$A=g^a$, which is transmitted to the service.
 
-The service generates $B=v''+g^b$ for a local random secret $b$ and sends $B$ and $u$ to the client, where $u$ is another random scrambling parameter that is publicly shown.
+The service computes $k=H(N,g)$ and generates $B=k\cdot v''+g^b$ for a local random
+secret $b$ and sends $B$ to the client.  Note that the computation of $B$ is
+completely done in modulo arithmetic.  We are assuming SRP~6a, which does not
+generate a random value $u$ on the server and sends it to the client, but instead
+both compute $u=H(A,B)$.  Leading zero bytes should not be trimmed, to make $A$ and $B$
+always have the same byte count as (the shortest representation of) the modulus.
 
-Through the stored values of $p$ and $P$, the client can now reconstruct $v''$, which requires the non-extractable secret $P$; moreover, the outcome cannot be reversed to $P$ due to the properties of the discrete logarithm problem.  The value $v''$ is also known to the service, so it may be exported from the \pkcs11 interface.  The client now uses $v''$ find $B-v''$, which is entirely based on values that the service also sees.  The outcome equals $g^b$, which can be combined with session key $a$ in \c_DeriveKey to find $g^{ab}$, a normal DH result.
+Through the values of $p$ and $P$, the client can now reconstruct $v''$, which requires the non-extractable secret $P$; moreover, the outcome cannot be reversed to find the private value $P$ due to the properties of the discrete logarithm problem.  The value $v''$ is also known to the service, so it may be exported from the \pkcs11 interface.  The client can compute $k=H(N,g)$ and now uses $v''$ find $B-k\cdot v''$ with modular arithmetic, which is entirely based on values that the service also sees.  The outcome equals $g^b$, which can be combined with session key $a$ in \c_DeriveKey to find $g^{ab}$, a normal DH result.
 
-The remainder of the computation of $S''$ consists of using the value $B-v''$ in off-token multiplication and modular exponentiation, all based on the public values $B-v''$, $u$, $H(s)$ and the locally generated random value $a$, all of which are safe to do outside of \pkcs11, and there will be two modular exponentiations with secret key $P$ as the exponent, to be conducted on the token behind \pkcs11.  It is this last point where the token is a strict requirement in deriving the proper values.
+The remainder of the modular computation of $S''$ consists of using the value $B-k\cdot v''$ in off-token multiplication and modular exponentiation, all based on the public values $B-k\cdot v''$, $u$, $H(s)$ and the locally generated random value $a$, all of which are safe to reveal outside of \pkcs11, and there will be two modular exponentiations with secret key $P$ as the exponent, to be conducted on the token behind the protective \pkcs11 API.  It is this last point where presence of the token is a strict requirement to derive the proper values.
 
-Note that the value $S''$ is also available on the service, so we consider it public.  [\textbf{TODO:} How about the $\ldots^P$ and ${\ldots^P}^P$ values, are they `public' too?]  Likewise, the session key $K=H(S)$ is also available to the service and not considered secret.
+Note that the value $S''$ is also available on the service, so we do not consider it a secret to be concealed behind \pkcs11.  [\textbf{TODO:} How about the $\ldots^P$ and ${\ldots^P}^P$ values, are they `public' too?]  Likewise, the session key $K=H(S)$ is also available to the service and not considered secret.
 
-Note that the value of $x''$ is absent from the calculations.  Instead, the secret key $P$ is used.  In a normal calculation the dependency on a secret key might be a liability, but when using \pkcs11 this is not as charged because of its assumed protection of private keys.  The value of $x''$ cannot be derived either, since the protected storage of the password values make it impossible to find the outcome of $H(s)p$ because that is not part of the DH mechanism.
+Note that the value of $x''$ is absent from the calculations.  Instead, the secret key $P$ is used.  In a normal calculation the dependency on a secret key might be a liability, but when using \pkcs11 this is not as problematic because of its ability to encapsulate private keys.  The value of $x''$ cannot be derived either, since the protected storage of the password values make it impossible to find the outcome of $H(s)p$ because that is not part of the DH mechanism.
 
+\paragraph{Keys and Verifiers.}
+The computation of $K''=H(S'')$ is a trivial hashing operation that does not require padding of $S''$, so we don't do it in \srp11.  The computation of $M_1''$ and $M_2''$ are however sensitive to the problems of concatenation of variable-sized fields; bytes from one might be cut off and attached to another while retaining the same hash.  Under SRP, this has not been solved with unambiguous separators, nor by length annotation, so the number of bytes of $A$ and $B$ in the hashing computations must be fixed to the same number of bytes as (the shortest representation of) the modulus.  Sizes of $K''$ and $M_1''$ are fixed by the hash algorithm $H()$, so they need no special treatment.  Finally, the value $H(N)\oplus H(g)$ does not have this problem and so there is no need to pad $g$; both $N$ and $g$ can have the shortest possible byte sizes.  It is common for SRP to apply no padding in the computation of $k=H(N,g)$ either.
 
 \section{Performance Considerations}
 
@@ -278,22 +298,24 @@ The chief concern is the authentication process.  In the original process we fin
 
 Clearly, the inability of computing $a+ux$ before the exponention forces in extra computations in return for the added security of not handling $x$ in \srp11.  The computational comlexity of \srp11 is about 75\% higher than for plain SRP.  This factor is probably irrelevant in comparison to the (possible) move of the calculation to a piece of hardware.  Hardware tends to be either much slower (USB token) or much faster (HSM, crypto co-processor) at performing modular exponentiation than a CPU.
 
+We performed measurements that compared an SRP implementation to \srp11, the latter communicating with a software-based HSM.  Both procedures included a client and a server running in the same process on the same machine, so as to eliminate network delays.  We used the standard group with a 4095 bits modulus.  The results indicate that \srp11 takes ten to twelve times as much computation time as SRP.  This has not been unravelled to separate the \pkcs11 overhead from the computations themselves, because there will always be \pkcs11 overhead when \srp11 is being used.  The total computation time of one \srp11 verification run on a 2.2 GHz amd64 machine took about 175~ms.
+
 
 \section{Security Considerations}
 
-The values that are available as intermediate results in \srp11 are all `public', in the sense that the service can also find them based on what it knows.  Most computations are based on a generator raised to a (secret or public) exponent, which is considered irreversable on grounds of the infeasability of the discrete logarithm problem.  [\textbf{TODO:} The values $\ldots^P$ and ${\ldots^P}^P$ might be non-`public'.]
+The values that are available as intermediate results in \srp11 are all `public', in the sense that the service can also find them based on what it knows.  Most computations are based on a generator raised to a (secret or public) exponent, which is considered irreversable on grounds of the infeasability of the discrete logarithm problem.  [\textbf{TODO:} The values $\ldots^P$ and ${\ldots^P}^P$ might be non-`public'; to be determined whether they could do harm.]
 
-The value $v''$ is known to the service, and therefore its derivation as $p^{H(s)P}$ during authentication does not reveal information that should be protected by \pkcs11.  The value $B-v''$ is `public', and so is $a$, so computing $(B-v'')^a$ presents no problems.  The same holds for $(B-v'')^u$ and the next step, $((B-v'')^u)^{H(s)}$.  The latter value is then twice raised to the value $P$ that is protected behind \pkcs11, but an attacker would need to crack discrete logarithms to reverse this to find $P$.  The outcome of this last operation is equal to the service-side value $S$ multiplied by the inverse of the public-value based $(B-v'')^a$, so having the value once more reveals no new information.  The remainder computers $K$, $M_1$ and $M_2$ on both ends, so there is no question about their revelation of new information that ought to be protected \pkcs11.
+The value $v''$ is known to the service, and therefore its derivation as $p^{H(s)P}$ during authentication does not reveal information that should be protected by \pkcs11.  The value $B-k\cdot v''$ is `public', and so is $a$, so computing $(B-k\cdot v'')^a$ presents no problems.  The same holds for $(B-k\cdot v'')^u$ and the next step, $((B-k\cdot v'')^u)^{H(s)}$.  The latter value is then twice raised to the value $P$ that is protected behind \pkcs11, but an attacker would need to crack discrete logarithms to reverse this to find $P$.  The outcome of this last operation is equal to the service-side value $S$ multiplied by the inverse of the public-value based $(B-k\cdot v'')^a$, so having the value once more reveals no new information.  The remainder computers $K$, $M_1$ and $M_2$ on both ends, so there is no question about their revelation of new information that ought to be protected \pkcs11.
 
 It is worth noting that a client might turn rogue when it is cracked; in such cases, it might gain the rights to authenticate, but it should not gain access to the passwords through which it can mount future attacks on other locations.  This makes the common assumption that the credential protection of \pkcs11 is not cracked; an assumption that can be influenced by a suitable choice of \pkcs11 implementation.  Plain SRP and \srp11 are not different in this respect, and in fact it is common to all DH mechanism.  Another point common to all three variations is that thrashing of the random values $a$ and $b$ suffices to thwart future attackers from recovering session keys of traffic preceding the crack on the client (forward secrecy).
 
 The value $p=g^P$ is retained as a `cache' value.  Rogue access to \pkcs11 might consider replacing this value with a more suitable value, to influence future computations based on it.  This is not likely to lead to anything useful however; first, it would be noticed when accessing a non-rogue service; second, the value $P$ is still used in computations; and third, the discrete logarithm problem makes it notoriously difficult to derive a value of $p$ that would lead to a desired outcome.  A much better attack would be to replace both $p$ and $P$ which is comparable to replacing a password; this however, would not leak any information about the prior value of $P$ and would invalidate access to services setup with it.
 
-Modular exponentiation cannot be reversed, as a result of the discrete logarithm problem.  The start of the computation is $B-v''$, which equals $g^b$ and that uses an unknown value $b$.  Raising this to the powers $u$, $H(s)$, $P$ and $P$ in any order should stir the value even further, but in lieu of the value $b$ on the client and due to the discrete logarithm problem it is unlikely that an attack could be mounted from this angle.  \textbf{Open Question:} Can we prove that?
+Modular exponentiation cannot be reversed, as a result of the discrete logarithm problem.  The start of the computation is $B-k\cdot v''$, which equals $g^b$ and that uses an unknown value $b$.  Raising this to the powers $u$, $H(s)$, $P$ and $P$ in any order should stir the value even further, but in lieu of the value $b$ on the client and due to the discrete logarithm problem it is unlikely that an attack could be mounted from this angle.  \textbf{Open Question:} Can we prove that?
 
 In conclusion, the maximum protection that \pkcs11 can deliver has been achieved with \srp11, under the assumption that what the service knows is sufficiently public.  That angle however, is subject of potential crisitism.  It could be argued that the service is in a special position.  For one, it generates random string $b$ internally and only publishes the corresponding $B$; but that alone would not make much difference, an active MITM attack could produce similar values. The vital distinction is that the service knows $v'$, which is assumed to have been relayed to it in a covert manner, and so it is a shared secret between client and service --- one that would not be available to anyone on the channel between client and service.
 
-Unfortunately, it is not possible to redesign \srp11 to treat $v''$ as a secret value.  This can be seen directly in the computations; the construction $(B-v'')^e$, regardless of the exponent $e$ cannot be computed with DH values, because subtraction is not foreseen in this mechanism.  This is where \pkcs11 reveals that it was not designed with plain SRP or \srp11 in mind.  And since exponentiation does not distribute through subtraction, neither modular or otherwise, we cannot construct any such mechanism cleverly.
+Unfortunately, it is not possible to redesign \srp11 to treat $v''$ as a secret value.  This can be seen directly in the computations; the construction $(B-k\cdot v'')^e$, regardless of the exponent $e$ cannot be computed with DH values, because subtraction is not foreseen in this mechanism.  This is where \pkcs11 reveals that it was not designed with plain SRP or \srp11 in mind.  And since exponentiation does not distribute through subtraction, neither modular or otherwise, we cannot construct any such mechanism cleverly.
 
 Note that the visibility of $v''$ is less than perfect, but not truly problematic in itself.  The sole reason for treating all data available to the service as public is to avoid putting too much faith in what \pkcs11 can do.  Apparantly, this is its limitation.  Note that this is also caused by something else --- the client is the party that originally generated $v''$ and would be able to do that again.
 
@@ -306,8 +328,6 @@ This article introduces \srp11, a variation on SRP that uses \pkcs11 to protects
 
 It has been shown that the modified generation of salt and verifier combined with the modified client-side authentication computations compute values equivalent to those of plain SRP, and that the service or protocol require no changes.  In other words, only the client needs to modify its computations if it intends to use \pkcs11.
 
-In terms of efficiency, the \srp11 mechanism adds 75\% to the computational complexity, relative to plain SRP.  When \pkcs11 is implemented on hardware, then it is likely that this choice has an overruling impact on the speed of the computations --- they would take longer when a plain USB token is used, and would go down when cryptographic acceleration is built into the hardware.
-
-\textbf{Open Issue:} It remains to be seen if the details of the DH mechanism in \pkcs11 will indeed permit the repeated use of modular exponentiation.  An attempt to implement appears to be a useful exercise, in light of the potential achievements of \srp11; if this mechanism does not work, then chances of finding another that will work are modest, to put it mildly.
+In terms of efficiency, the \srp11 mechanism adds a factor ten to twelve to the running time in comparison to plain SRP, but the execution times are still quite acceptable.  When \pkcs11 is implemented on hardware, then choice is likely to have a stronger impact on the speed of the computations --- they would take longer when a plain USB token is used, and would go down when cryptographic acceleration is built into the hardware.
 
 \end{document}
